@@ -1,0 +1,32 @@
+---
+alwaysApply: true
+---
+description: Literary translation workflow for the Paris project
+
+globs:
+
+  - "notes/es/**/*.md"
+
+  - "notes/en/**/*.md"
+
+  - "notes/fr/**/*.md"
+
+---
+
+When translating notes:
+
+- Treat Spanish files in `notes/es/` as originals.
+
+- English translations go in `notes/en/`.
+
+- French translations go in `notes/fr/`.
+
+- Preserve Markdown and frontmatter.
+
+- Preserve literary ambiguity, atmosphere, and rhythm.
+
+- Do not summarize unless explicitly asked.
+
+- Do not overwrite originals.
+
+- Use the same filename in the target language folder.
