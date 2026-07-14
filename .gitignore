@@ -1,0 +1,14 @@
+.DS_Store
+.env
+.venv/
+.watchdog-service.conf
+.watchdog-plist.*
+__pycache__/
+*.py[cod]
+watch.log
+
+# Generated outputs from the non-literary watchdog fixture.
+tests/fixtures/vault/10 Literary Map/
+tests/fixtures/vault/11 Proofread/
+tests/fixtures/vault/12 French/
+tests/fixtures/vault/13 Editorial Review/
