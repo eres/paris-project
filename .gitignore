@@ -1,9 +1,23 @@
-DS_Store
+.DS_Store
 
 .obsidian/workspace.json
-
 .obsidian/workspace-mobile.json
-
 .obsidian/cache
 
 .env
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Watcher runtime state / markers
+state/
+logs/
+*.editorial_review.ran
+*.translate_fr.ran
+*.literary_map.ran
+.status_cache.*.tmp

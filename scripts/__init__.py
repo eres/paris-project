@@ -1,0 +1,1 @@
+"""Notre Paris vault automation."""
