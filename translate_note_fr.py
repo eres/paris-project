@@ -28,16 +28,17 @@ Tu ne dois pas :
 - Expliquer ta traduction ni commenter le texte.
 - Résumer ou paraphraser de façon réductrice.
 - Ajouter du contenu, des notes de traduction ni des métadonnées.
+- Traduire, copier ou inventer un bloc YAML / frontmatter (les lignes entre ---).
 - Envelopper la réponse dans des blocs de code ni ajouter de préface comme « Voici la traduction ».
 
-Réponds uniquement avec le markdown traduit en français. N'inclus pas de blocs <think>. N'explique pas ton raisonnement.
+Réponds uniquement avec le corps markdown traduit en français. N'inclus pas de frontmatter. N'inclus pas de blocs <think>. N'explique pas ton raisonnement.
 """
 
 USER_PROMPT_TEMPLATE = """\
 /no_think
 
-Traduis la note markdown suivante de l'espagnol vers le français littéraire et renvoie uniquement le markdown traduit.
-Les lignes NOTRE_PARIS_SOURCE_BEGIN et NOTRE_PARIS_SOURCE_END délimitent la note source ; elles ne font pas partie de la note et ne doivent jamais apparaître dans ta réponse.
+Traduis le corps markdown suivant de l'espagnol vers le français littéraire et renvoie uniquement le corps traduit, sans frontmatter YAML.
+Les lignes NOTRE_PARIS_SOURCE_BEGIN et NOTRE_PARIS_SOURCE_END délimitent le texte source ; elles ne font pas partie de la note et ne doivent jamais apparaître dans ta réponse.
 
 NOTRE_PARIS_SOURCE_BEGIN
 {content}
@@ -125,6 +126,45 @@ def french_output_path(note_path: Path, output: Path | None) -> Path:
     return french_dir / base_name
 
 
+def split_frontmatter(content: str) -> tuple[str | None, str]:
+    """Split a markdown note into an exact YAML fence block and body."""
+    text = content.lstrip("\ufeff")
+    if not text.startswith("---"):
+        return None, text
+
+    lines = text.splitlines(keepends=True)
+    closing_index = None
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            closing_index = index
+            break
+
+    if closing_index is None:
+        return None, text
+
+    frontmatter = "".join(lines[: closing_index + 1]).rstrip("\n")
+    body = "".join(lines[closing_index + 1 :]).lstrip("\n")
+    return frontmatter, body
+
+
+def strip_translated_frontmatter(text: str) -> str:
+    """Drop YAML the model may still emit so source properties stay intact."""
+    stripped = text.lstrip("\ufeff").lstrip()
+    if not stripped.startswith("---"):
+        return text.strip()
+    _frontmatter, body = split_frontmatter(stripped)
+    return body.strip()
+
+
+def compose_translated_note(frontmatter: str | None, translated_body: str) -> str:
+    body = strip_translated_frontmatter(translated_body).strip("\n")
+    if not body:
+        raise ValueError("Model returned an empty translated note.")
+    if frontmatter is None:
+        return body + "\n"
+    return f"{frontmatter}\n\n{body}\n"
+
+
 def build_prompt(tokenizer, content: str) -> str:
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -199,10 +239,11 @@ def translate_note_fr(
     from mlx_lm import load
 
     content = read_note(note_path)
+    frontmatter, body = split_frontmatter(content)
     out_path = french_output_path(note_path, output)
 
     model, tokenizer = load(model_name)
-    prompt = build_prompt(tokenizer, content)
+    prompt = build_prompt(tokenizer, body)
     raw_response = run_model(
         model,
         tokenizer,
@@ -216,10 +257,7 @@ def translate_note_fr(
         print("END RAW MODEL OUTPUT")
 
     translated = extract_markdown_block(raw_response)
-    if not translated.strip():
-        raise ValueError("Model returned an empty translated note.")
-
-    write_markdown(out_path, translated)
+    write_markdown(out_path, compose_translated_note(frontmatter, translated))
     return out_path
 
 
