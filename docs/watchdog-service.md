@@ -48,13 +48,13 @@ Only notes under `01 Places`, `02 People`, `03 Scenes`, `04 Themes`, or `05 Frag
 | Note status | Actions, in order |
 | --- | --- |
 | `Ready-for-review` / `ready_for_review` | `proofread_note.py` → `editorial_review.py` |
-| `Done` / `done` | `translate_note_fr.py` → `literary_map.py` |
+| `Done` / `done` | `translate_note_fr.py` → `literary_map.py` → `publish_to_notion.py` (when enabled) |
 
-`Ready-for-review` never creates a French translation or updates the literary map. `Done` translates the final source note directly; it does not repeat proofreading or editorial review. The literary map runs only after a successful final translation.
+`Ready-for-review` never creates a French translation or updates the literary map. `Done` translates the final source note directly; it does not repeat proofreading or editorial review. The literary map runs only after a successful final translation. Notion publication is opt-in and also requires a successful French translation.
 
 Generated folders (`11 Proofread`, `12 French`, `13 Editorial Review`, and `10 Literary Map`) are ignored, so their outputs cannot reactivate the source pipeline. During one service run, the watchdog remembers the last successful content signature and status transition for each note. The same version and status are processed once.
 
-If Spanish content changes after translation, first move the note out of `Done` while editing, then set it to `Done` again. A content edit that leaves the note continuously marked `Done` does not automatically regenerate French; explicitly re-establishing `Done` triggers translation of the new final version followed by the literary map update.
+If Spanish content changes after translation, first move the note out of `Done` while editing, then set it to `Done` again. A content edit that leaves the note continuously marked `Done` does not automatically regenerate French. Every new transition back into `Done` runs the final pipeline again, even if the body happens to match the previously published version. Notion updates the existing numbered page rather than creating another. If a publishing step fails, the watchdog retries after approximately five minutes without rerunning successful preceding steps during that service session.
 
 ## macOS access to a vault under Documents
 
@@ -74,3 +74,36 @@ Enable its toggle, then run:
 ```
 
 The status must say `state = running`, and `watchdog.out.log` must contain `Observer: native`. If Python is upgraded to a different major/minor Homebrew formula, add the corresponding `Python.app` and reinstall or restart the service.
+
+## Automatic publication to Notion
+
+Obsidian remains the editorial source of truth. Only the body of the generated file in `12 French/<note>.fr.md` is copied to a numbered page under **Notre Paris / Notes**. The source YAML frontmatter is not included. Notion's existing pages 1–11 remain unchanged until their corresponding source note is republished.
+
+1. Create a Notion internal integration with permission to **read, insert, and update content**. Share the existing **Notre Paris / Notes** page with that integration. The ChatGPT connection does **not** automatically grant credentials to the local Python service.
+2. In this repo's private `.env` (never commit it), set:
+
+    ```dotenv
+    NOTION_PUBLISH_ENABLED=1
+    NOTION_API_KEY=secret_your_internal_integration_token
+    NOTION_NOTES_PAGE_ID=3ccf9bd4a7ae8157b497fb287db20c8a
+    ```
+
+3. Confirm access without changing Notion:
+
+    ```bash
+    .venv/bin/python publish_to_notion.py "/absolute/path/to/vault/01 Places/Your Note.md" --dry-run
+    ```
+
+4. With a vetted final French translation and approval to publish, run the publisher manually once, or change the source note to `Done` in Obsidian. Restart the existing service after changing `.env`:
+
+    ```bash
+    ./scripts/watchdog-restart.sh
+    ./scripts/watchdog-status.sh
+    ./scripts/watchdog-logs.sh
+    ```
+
+The first publication numbers the note using the **highest numbered child page + 1**; subsequent publications keep that number and update its existing contents. Previously created Notion notes can be adopted by exact title (ignoring numeric prefix). If more than one page matches, the publisher stops rather than guessing. A local mapping of source paths to Notion page IDs lives in the vault's `.notre-paris-notion-state.json`; it is not a credential file. Keep and back up this file alongside the vault. Never manually delete the mapping unless reconciling with Notion.
+
+Only `Done` notes in the five source folders can publish. The publisher replaces the **whole body** of the corresponding Notion page because Obsidian is authoritative; write editorial changes in Obsidian. Use `--dry-run` to verify the intended page and number first. No existing notes are batch-published automatically on initial installation; move a selected source out of `Done` and back into `Done`, or run it manually, to republish.
+
+If the integration token, permissions, or network fail, the existing translated file and literary map remain intact. The watchdog retries the Notion step. To temporarily disable publishing without disrupting translation, change `NOTION_PUBLISH_ENABLED=0`, restart the LaunchAgent, or run the watchdog with `--skip-notion`.
