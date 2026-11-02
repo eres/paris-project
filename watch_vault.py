@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+import os
 import re
 import signal
 import subprocess
@@ -56,7 +57,7 @@ WATCH_DIRS = {
 PROCESSABLE_STATUSES = {"ready_for_review", "done"}
 PIPELINES = {
     "ready_for_review": ("proofread", "editorial_review"),
-    "done": ("translate_fr", "literary_map"),
+    "done": ("translate_fr", "literary_map", "publish_notion"),
 }
 
 DEFAULT_DEBOUNCE_SECONDS = 60
@@ -200,6 +201,8 @@ class VaultHandler(FileSystemEventHandler):
         force_translate: bool = False,
         force_editorial_review: bool = False,
         debounce_seconds: int = DEFAULT_DEBOUNCE_SECONDS,
+        notion_publish_path: Path | None = None,
+        notion_publish_enabled: bool | None = None,
     ):
         self.vault_path = vault_path
         self.proofread_path = proofread_path
@@ -211,6 +214,13 @@ class VaultHandler(FileSystemEventHandler):
         self.force_translate = force_translate
         self.force_editorial_review = force_editorial_review
         self.debounce_seconds = debounce_seconds
+        self.notion_publish_path = notion_publish_path or Path(__file__).parent / "publish_to_notion.py"
+        if notion_publish_enabled is None:
+            notion_publish_enabled = os.environ.get("NOTION_PUBLISH_ENABLED", "").strip().lower() in {
+                "1", "true", "yes", "on"
+            }
+        self.notion_publish_enabled = notion_publish_enabled
+        self.completed_done_steps: dict[tuple[Path, str], set[str]] = {}
         self.pending = {}
         self.last_observed_status: dict[Path, str | None] = {}
         self.status_generation: dict[Path, int] = {}
@@ -342,22 +352,34 @@ class VaultHandler(FileSystemEventHandler):
         log(f"[EDITORIAL] Output found: {editorial_file}")
         return True
 
-    def run_done_pipeline(self, path: Path) -> bool:
-        log(f"[TRANSLATE] Final translation started: {path}")
-        if not self.run_step("TRANSLATE", self.translate_path, path):
-            log(
-                "[LITERARY_MAP] Skipped because final translation failed.",
-                stream=sys.stderr,
-            )
-            return False
+    def run_done_pipeline(self, path: Path, signature: str) -> bool:
+        # On retries do not rerun expensive earlier successful steps.
+        key = (path, signature)
+        completed = self.completed_done_steps.setdefault(key, set())
+        if "TRANSLATE" not in completed:
+            log(f"[TRANSLATE] Final translation started: {path}")
+            if not self.run_step("TRANSLATE", self.translate_path, path):
+                log("[DONE] Subsequent steps skipped: translation failed.", stream=sys.stderr)
+                return False
+            completed.add("TRANSLATE")
 
-        if not self.literary_map_enabled:
+        if self.literary_map_enabled:
+            if "LITERARY_MAP" not in completed:
+                log(f"[LITERARY_MAP] Literary map started: {self.vault_path}")
+                if not self.run_step("LITERARY_MAP", self.literary_map_path, self.vault_path):
+                    return False
+                completed.add("LITERARY_MAP")
+        else:
             log("[LITERARY_MAP] Literary map disabled")
-            return True
 
-        log(f"[LITERARY_MAP] Literary map started: {self.vault_path}")
-        if not self.run_step("LITERARY_MAP", self.literary_map_path, self.vault_path):
-            return False
+        if self.notion_publish_enabled:
+            if "NOTION" not in completed:
+                log(f"[NOTION] Publishing French note: {path}")
+                if not self.run_step("NOTION", self.notion_publish_path, path):
+                    return False
+                completed.add("NOTION")
+        else:
+            log("[NOTION] Publication disabled (set NOTION_PUBLISH_ENABLED=1 to activate)")
 
         return True
 
@@ -402,7 +424,7 @@ class VaultHandler(FileSystemEventHandler):
         for pipeline_status in requested_pipelines:
             key = (path, pipeline_status)
             last_signature = self.last_successful_signature.get(key)
-            if last_signature == signature:
+            if last_signature == signature and self.last_successful_generation.get(key) == generation:
                 log(
                     f"[WATCH] Skipped duplicate unchanged {pipeline_status} note: {path}"
                 )
@@ -420,7 +442,7 @@ class VaultHandler(FileSystemEventHandler):
             if pipeline_status == "ready_for_review":
                 succeeded = self.run_review_pipeline(path)
             else:
-                succeeded = self.run_done_pipeline(path)
+                succeeded = self.run_done_pipeline(path, signature)
 
             if not succeeded:
                 return False
@@ -441,7 +463,9 @@ class VaultHandler(FileSystemEventHandler):
             # Remove the event before processing so a new edit that arrives while
             # the pipeline is running remains queued for a later pass.
             self.pending.pop(path, None)
-            self.run_pipeline(path)
+            if not self.run_pipeline(path):
+                self.pending[path] = time.time() + 240
+                log(f"[WATCH] Failed note queued for retry: {path}")
 
 
 def main():
@@ -504,6 +528,17 @@ def main():
         help="Skip the Literary Map stage.",
     )
     parser.add_argument(
+        "--notion-publisher",
+        type=Path,
+        default=Path(__file__).parent / "publish_to_notion.py",
+        help="Python script that publishes the French note to Notion.",
+    )
+    parser.add_argument(
+        "--skip-notion",
+        action="store_true",
+        help="Skip Notion even when NOTION_PUBLISH_ENABLED=1.",
+    )
+    parser.add_argument(
         "--force-translate",
         action="store_true",
         help="Run French translation even when the note frontmatter status is not done.",
@@ -533,6 +568,8 @@ def main():
         force_translate=args.force_translate,
         force_editorial_review=args.force_editorial_review,
         debounce_seconds=debounce_seconds,
+        notion_publish_path=args.notion_publisher.expanduser().resolve(),
+        notion_publish_enabled=False if args.skip_notion else None,
     )
 
     if args.debug:
@@ -619,6 +656,7 @@ def main():
     log(f"[WATCH] Debounce: {debounce_seconds}s")
     log(f"[WATCH] Editorial review: {'enabled' if args.editorial_review else 'disabled'}")
     log(f"[WATCH] Literary map: {'enabled' if not args.skip_literary_map else 'disabled'}")
+    log(f"[WATCH] Notion publish: {'enabled' if handler.notion_publish_enabled else 'disabled'}")
     log(f"[WATCH] Force translate: {'enabled' if args.force_translate else 'disabled'}")
     log(f"[WATCH] Force editorial review: {'enabled' if args.force_editorial_review else 'disabled'}")
     log("[WATCH] Press Ctrl+C to stop.")
