@@ -22,6 +22,15 @@ from urllib.request import Request, urlopen
 
 from markdown_it import MarkdownIt
 from translate_note_fr import find_vault_root, french_output_path, split_frontmatter
+from watch_vault import get_note_status
+
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:
+    load_dotenv = None
+
+if load_dotenv is not None:
+    load_dotenv(Path(__file__).parent / ".env")
 
 NOTION_API_BASE = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
@@ -266,6 +275,8 @@ def publish(note_path: Path, *, dry_run: bool = False, api: NotionAPI | None = N
     vault = find_vault_root(note_path)
     if vault is None:
         raise PublishError("Source note must be inside an Obsidian vault.")
+    if get_note_status(note_path) != "done":
+        raise PublishError("The source note must have status Done.")
     source = note_path.relative_to(vault)
     if not source.parts or source.parts[0] not in {
         "01 Places", "02 People", "03 Scenes", "04 Themes", "05 Fragments"
@@ -294,6 +305,11 @@ def publish(note_path: Path, *, dry_run: bool = False, api: NotionAPI | None = N
         previous_id = entry.get("page_id")
         children = api.children(parent_id)
         page_id, title = select_destination(children, note_path.stem, previous_id)
+        if page_id and any(
+            source_key != str(source) and record.get("page_id") == page_id
+            for source_key, record in state["pages"].items()
+        ):
+            raise PublishError("Notion page is already mapped to another source note.")
         operation = "update" if page_id else "create"
         if dry_run:
             return operation, title, page_id
