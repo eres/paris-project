@@ -220,7 +220,7 @@ class VaultHandler(FileSystemEventHandler):
                 "1", "true", "yes", "on"
             }
         self.notion_publish_enabled = notion_publish_enabled
-        self.completed_done_steps: dict[tuple[Path, str], set[str]] = {}
+        self.completed_done_steps: dict[tuple[Path, str, int], set[str]] = {}
         self.pending = {}
         self.last_observed_status: dict[Path, str | None] = {}
         self.status_generation: dict[Path, int] = {}
@@ -352,9 +352,9 @@ class VaultHandler(FileSystemEventHandler):
         log(f"[EDITORIAL] Output found: {editorial_file}")
         return True
 
-    def run_done_pipeline(self, path: Path, signature: str) -> bool:
+    def run_done_pipeline(self, path: Path, signature: str, generation: int) -> bool:
         # On retries do not rerun expensive earlier successful steps.
-        key = (path, signature)
+        key = (path, signature, generation)
         completed = self.completed_done_steps.setdefault(key, set())
         if "TRANSLATE" not in completed:
             log(f"[TRANSLATE] Final translation started: {path}")
@@ -442,7 +442,7 @@ class VaultHandler(FileSystemEventHandler):
             if pipeline_status == "ready_for_review":
                 succeeded = self.run_review_pipeline(path)
             else:
-                succeeded = self.run_done_pipeline(path, signature)
+                succeeded = self.run_done_pipeline(path, signature, generation)
 
             if not succeeded:
                 return False
