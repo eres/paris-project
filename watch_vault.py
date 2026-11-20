@@ -673,7 +673,17 @@ def main():
     log(f"[WATCH] Notion sync: {'enabled' if args.notion_sync else 'disabled'}")
     if args.notion_sync:
         log("[NOTION] Reconciling previously tracked Done notes at startup")
-        handler.run_step("NOTION_RECONCILE", notion_path, vault_path)
+        try:
+            reconcile = subprocess.run(
+                [sys.executable, str(notion_path), "--reconcile", "--vault", str(vault_path)],
+                check=False, capture_output=True, text=True,
+            )
+            if reconcile.stdout:
+                log("[NOTION_RECONCILE] " + reconcile.stdout.rstrip())
+            if reconcile.returncode:
+                log("[NOTION_RECONCILE] " + reconcile.stderr.rstrip(), stream=sys.stderr)
+        except Exception as exc:
+            log(f"[NOTION_RECONCILE] Could not run: {exc}", stream=sys.stderr)
     log("[WATCH] Press Ctrl+C to stop.")
 
     stop_requested = threading.Event()
