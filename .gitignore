@@ -17,3 +17,4 @@ tests/fixtures/vault/13 Editorial Review/
 .notion-sync-state.json
 .notion-sync-state.lock
 .notion-sync-state.json.tmp
+.notion-sync-aliases.json
