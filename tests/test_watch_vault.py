@@ -125,7 +125,7 @@ class VaultHandlerTests(unittest.TestCase):
 
             self.assertEqual(calls, ["PROOFREAD", "EDITORIAL", "PROOFREAD", "EDITORIAL"])
 
-    def test_changed_done_content_waits_until_done_is_reestablished(self):
+    def test_changed_done_content_reprocesses_without_reestablishing_status(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             note = self.make_note(root, "done", "Versión final uno.")
@@ -136,7 +136,10 @@ class VaultHandlerTests(unittest.TestCase):
             self.write_note(note, "done", "Edición posterior sin cambiar estado.")
             self.assertTrue(handler.run_pipeline(note))
 
-            self.assertEqual(calls, ["TRANSLATE", "LITERARY_MAP"])
+            self.assertEqual(calls, [
+                "TRANSLATE", "LITERARY_MAP",
+                "TRANSLATE", "LITERARY_MAP",
+            ])
 
     def test_full_editorial_transition_translates_only_edited_final_content(self):
         with tempfile.TemporaryDirectory() as temp_dir:
