@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from sync_notion import NotionSync
@@ -104,6 +105,20 @@ class NotionSyncTests(unittest.TestCase):
             sync.sync_one(note)
         self.assertEqual(len(self.api.created), 0)
         self.assertEqual(self.api.updated, [])
+
+    def test_legacy_alias_prevents_duplicate_when_french_title_differs(self):
+        note = self.add("La sala", "La salle était vaste.")
+        self.api.pages[8]["title"] = "9. La salle"
+        self.api.content["old-9"] = "La salle était vaste."
+        # Use a temporary alias fixture rather than writing to the real repo.
+        with mock.patch("sync_notion.ALIASES_FILE", self.root / "aliases.json"):
+            (self.root / "aliases.json").write_text(
+                '{"01 Places/La sala.md": "old-9"}', encoding="utf-8"
+            )
+            sync = self.sync()
+            self.assertEqual(sync.pending(), [])
+            self.assertIn("adopted matching page", sync.sync_one(note))
+            self.assertEqual(len(self.api.created), 0)
 
     def test_missing_translation_is_reported(self):
         source = self.add("Chez Emmanuel")
