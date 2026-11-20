@@ -174,6 +174,50 @@ class VaultHandlerTests(unittest.TestCase):
 
             self.assertIn(note, handler.pending)
 
+    def test_done_edits_are_retranslated_and_resynced_without_reestablishing_status(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            note = self.make_note(root, "Done", "Version un.")
+            handler = self.make_handler(root)
+            handler.notion_sync_enabled = True
+            calls, _ = self.install_fake_steps(handler)
+
+            self.assertTrue(handler.run_pipeline(note))
+            self.write_note(note, "Done", "Version deux.")
+            self.assertTrue(handler.run_pipeline(note))
+
+            self.assertEqual(calls, [
+                "TRANSLATE", "NOTION", "LITERARY_MAP",
+                "TRANSLATE", "NOTION", "LITERARY_MAP",
+            ])
+
+    def test_notion_failure_retries_only_sync_not_translation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            note = self.make_note(root, "Done")
+            handler = self.make_handler(root)
+            handler.notion_sync_enabled = True
+            calls = []
+            attempts = [0]
+
+            def fake_step(tag, _script, _note):
+                calls.append(tag)
+                if tag == "NOTION":
+                    attempts[0] += 1
+                    return attempts[0] > 1
+                return True
+
+            handler.run_step = Mock(side_effect=fake_step)
+            self.assertTrue(handler.run_pipeline(note))
+            self.assertIn(note, handler.pending_notion)
+            handler.pending_notion[note] = 0
+            handler.process_pending()
+            self.assertNotIn(note, handler.pending_notion)
+            self.assertEqual(calls, [
+                "TRANSLATE", "NOTION", "LITERARY_MAP", "NOTION",
+            ])
+
+
 
 if __name__ == "__main__":
     unittest.main()
