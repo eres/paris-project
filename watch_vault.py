@@ -57,7 +57,7 @@ WATCH_DIRS = {
 PROCESSABLE_STATUSES = {"ready_for_review", "done"}
 PIPELINES = {
     "ready_for_review": ("proofread", "editorial_review"),
-    "done": ("translate_fr", "literary_map", "notion_sync"),
+    "done": ("translate_fr", "notion_sync", "literary_map"),
 }
 
 DEFAULT_DEBOUNCE_SECONDS = 60
