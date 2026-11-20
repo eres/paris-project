@@ -48,7 +48,7 @@ Only notes under `01 Places`, `02 People`, `03 Scenes`, `04 Themes`, or `05 Frag
 | Note status | Actions, in order |
 | --- | --- |
 | `Ready-for-review` / `ready_for_review` | `proofread_note.py` → `editorial_review.py` |
-| `Done` / `done` | `translate_note_fr.py` → `literary_map.py` |
+| `Done` / `done` | `translate_note_fr.py` → optional `sync_notion.py` → `literary_map.py` |
 
 `Ready-for-review` never creates a French translation or updates the literary map. `Done` translates the final source note directly; it does not repeat proofreading or editorial review. The literary map runs only after a successful final translation.
 
@@ -74,3 +74,7 @@ Enable its toggle, then run:
 ```
 
 The status must say `state = running`, and `watchdog.out.log` must contain `Observer: native`. If Python is upgraded to a different major/minor Homebrew formula, add the corresponding `Python.app` and reinstall or restart the service.
+
+## Notion French publication
+
+Notion sync is opt-in: configure `NOTION_API_KEY` and `NOTION_SYNC_ENABLED=1` in the private `.env`. The watchdog will publish French translations after `Done`, retry Notion failures without retranslation, and reconcile tracked pages at startup. `Done` edits now retrigger the final pipeline to update the French copy. **Existing unpublished notes must be backfilled in explicit writing order** before new pages are numbered. See [Notion sync runbook](notion-sync.md) for the safe audit, ordered backfill, setup and rollback instructions.
