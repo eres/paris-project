@@ -30,6 +30,7 @@ from translate_note_fr import split_frontmatter
 
 NOTION_VERSION = "2026-03-11"
 STATE_FILE = Path(__file__).parent / ".notion-sync-state.json"
+ALIASES_FILE = Path(__file__).parent / ".notion-sync-aliases.json"
 TITLE_RE = re.compile(r"^(\d+)\.\s+(.+)$")
 
 
@@ -182,6 +183,7 @@ class NotionSync:
         self.api = api
         self.state_path = state_path
         self.state = self._load()
+        self.aliases = self._load_aliases()
         self.remote = self.api.child_pages()
         self._check_remote()
 
@@ -192,6 +194,21 @@ class NotionSync:
         if data.get("version") != 1 or not isinstance(data.get("pages"), dict):
             raise ValueError("Unrecognized Notion sync ledger format")
         return data
+
+    def _load_aliases(self) -> dict[str, str]:
+        # Historical translations may have Spanish source filenames but a
+        # French title in Notion. Link those by exact page ID, never by guess.
+        if not ALIASES_FILE.exists():
+            return {}
+        aliases = json.loads(ALIASES_FILE.read_text(encoding="utf-8"))
+        if not isinstance(aliases, dict) or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in aliases.items()
+        ):
+            raise ValueError("Notion aliases must map vault-relative paths to page IDs")
+        if len(aliases.values()) != len(set(aliases.values())):
+            raise ValueError("Two source notes cannot refer to one Notion page")
+        return aliases
 
     def _save(self) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -223,6 +240,13 @@ class NotionSync:
         return path.resolve().relative_to(self.vault).as_posix()
 
     def match(self, path: Path) -> dict | None:
+        key = self.key(path)
+        page_id = self.state["pages"].get(key, {}).get("page_id") or self.aliases.get(key)
+        if page_id:
+            found_by_id = [page for page in self.remote if page["id"] == page_id]
+            if len(found_by_id) != 1:
+                raise ValueError(f"Notion page ID for {key} is not a child of Notes")
+            return found_by_id[0]
         matches = []
         for page in self.remote:
             parts = title_parts(page["title"])
