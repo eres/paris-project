@@ -33,7 +33,7 @@ permissions and share the **Notes** page with it. Store the integration token
 locally, never in git:
 
     NOTION_API_KEY=secret_...
-    NOTION_NOTES_PAGE_ID=3ccf9bd4-a7ae-8157-b497-fb287db20c8a
+    NOTION_NOTES_PAGE_ID=<private Notes page UUID>
     NOTION_SYNC_ENABLED=1
 
 These belong in the project's .env, loaded by watch_vault.py. Do not paste
