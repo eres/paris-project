@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+import os
 import re
 import signal
 import subprocess
@@ -56,7 +57,7 @@ WATCH_DIRS = {
 PROCESSABLE_STATUSES = {"ready_for_review", "done"}
 PIPELINES = {
     "ready_for_review": ("proofread", "editorial_review"),
-    "done": ("translate_fr", "literary_map"),
+    "done": ("translate_fr", "literary_map", "notion_sync"),
 }
 
 DEFAULT_DEBOUNCE_SECONDS = 60
@@ -200,6 +201,8 @@ class VaultHandler(FileSystemEventHandler):
         force_translate: bool = False,
         force_editorial_review: bool = False,
         debounce_seconds: int = DEFAULT_DEBOUNCE_SECONDS,
+        notion_path: Path | None = None,
+        notion_sync_enabled: bool = False,
     ):
         self.vault_path = vault_path
         self.proofread_path = proofread_path
@@ -211,6 +214,10 @@ class VaultHandler(FileSystemEventHandler):
         self.force_translate = force_translate
         self.force_editorial_review = force_editorial_review
         self.debounce_seconds = debounce_seconds
+        self.notion_path = notion_path or Path(__file__).parent / "sync_notion.py"
+        self.notion_sync_enabled = notion_sync_enabled
+        self.pending_notion: dict[Path, float] = {}
+        self.notion_retry_attempts: dict[Path, int] = {}
         self.pending = {}
         self.last_observed_status: dict[Path, str | None] = {}
         self.status_generation: dict[Path, int] = {}
@@ -342,14 +349,27 @@ class VaultHandler(FileSystemEventHandler):
         log(f"[EDITORIAL] Output found: {editorial_file}")
         return True
 
+    def schedule_notion_retry(self, path: Path) -> None:
+        attempt = self.notion_retry_attempts.get(path, 0) + 1
+        self.notion_retry_attempts[path] = attempt
+        delay = min(300 * (2 ** min(attempt - 1, 4)), 3600)
+        self.pending_notion[path] = time.time() + delay
+        log(f"[NOTION] Publication pending; retry in {delay}s: {path}", stream=sys.stderr)
+
     def run_done_pipeline(self, path: Path) -> bool:
         log(f"[TRANSLATE] Final translation started: {path}")
         if not self.run_step("TRANSLATE", self.translate_path, path):
-            log(
-                "[LITERARY_MAP] Skipped because final translation failed.",
-                stream=sys.stderr,
-            )
+            log("[LITERARY_MAP] Skipped because final translation failed.", stream=sys.stderr)
             return False
+
+        if self.notion_sync_enabled:
+            if self.run_step("NOTION", self.notion_path, path):
+                self.pending_notion.pop(path, None)
+                self.notion_retry_attempts.pop(path, None)
+            else:
+                # Keep the successful translation and retry only publication;
+                # never regenerate the French note just because Notion is down.
+                self.schedule_notion_retry(path)
 
         if not self.literary_map_enabled:
             log("[LITERARY_MAP] Literary map disabled")
@@ -408,7 +428,7 @@ class VaultHandler(FileSystemEventHandler):
                 )
                 continue
 
-            if self.last_successful_generation.get(key) == generation:
+            if pipeline_status != "done" and self.last_successful_generation.get(key) == generation:
                 log(
                     f"[WATCH] Skipped changed note still in {pipeline_status}; "
                     "move it to another status before setting this status again."
@@ -442,6 +462,20 @@ class VaultHandler(FileSystemEventHandler):
             # the pipeline is running remains queued for a later pass.
             self.pending.pop(path, None)
             self.run_pipeline(path)
+
+        if self.notion_sync_enabled:
+            for path, next_attempt in list(self.pending_notion.items()):
+                if time.time() < next_attempt:
+                    continue
+                if not path.is_file() or get_note_status(path) != "done":
+                    self.pending_notion.pop(path, None)
+                    self.notion_retry_attempts.pop(path, None)
+                    continue
+                if self.run_step("NOTION", self.notion_path, path):
+                    self.pending_notion.pop(path, None)
+                    self.notion_retry_attempts.pop(path, None)
+                else:
+                    self.schedule_notion_retry(path)
 
 
 def main():
@@ -488,6 +522,18 @@ def main():
         default=Path(__file__).parent / "editorial_review.py",
     )
     parser.add_argument(
+        "--notion",
+        type=Path,
+        default=Path(__file__).parent / "sync_notion.py",
+        help="French-note Notion publication script.",
+    )
+    parser.add_argument(
+        "--notion-sync",
+        action=argparse.BooleanOptionalAction,
+        default=os.getenv("NOTION_SYNC_ENABLED", "").lower() in {"1", "true", "yes"},
+        help="Synchronize completed French notes to Notion (default: env NOTION_SYNC_ENABLED).",
+    )
+    parser.add_argument(
         "--literary-map",
         type=Path,
         default=Path(__file__).parent / "literary_map.py",
@@ -520,6 +566,7 @@ def main():
     translate_path = args.translate.expanduser().resolve()
     editorial_path = args.editorial.expanduser().resolve()
     literary_map_path = args.literary_map.expanduser().resolve()
+    notion_path = args.notion.expanduser().resolve()
     debounce_seconds = DEBUG_DEBOUNCE_SECONDS if args.debug else DEFAULT_DEBOUNCE_SECONDS
 
     handler = VaultHandler(
@@ -533,6 +580,8 @@ def main():
         force_translate=args.force_translate,
         force_editorial_review=args.force_editorial_review,
         debounce_seconds=debounce_seconds,
+        notion_path=notion_path,
+        notion_sync_enabled=args.notion_sync,
     )
 
     if args.debug:
@@ -621,6 +670,10 @@ def main():
     log(f"[WATCH] Literary map: {'enabled' if not args.skip_literary_map else 'disabled'}")
     log(f"[WATCH] Force translate: {'enabled' if args.force_translate else 'disabled'}")
     log(f"[WATCH] Force editorial review: {'enabled' if args.force_editorial_review else 'disabled'}")
+    log(f"[WATCH] Notion sync: {'enabled' if args.notion_sync else 'disabled'}")
+    if args.notion_sync:
+        log("[NOTION] Reconciling previously tracked Done notes at startup")
+        handler.run_step("NOTION_RECONCILE", notion_path, vault_path)
     log("[WATCH] Press Ctrl+C to stop.")
 
     stop_requested = threading.Event()
