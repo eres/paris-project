@@ -100,7 +100,8 @@ class NotionSyncTests(unittest.TestCase):
         self.api.pages.append({"id": "human", "title": "12. Chez Emmanuel"})
         self.api.content["human"] = "Edited by author"
         sync = self.sync()
-        self.assertIn("not overwritten", sync.sync_one(note))
+        with self.assertRaisesRegex(ValueError, "no overwrite"):
+            sync.sync_one(note)
         self.assertEqual(len(self.api.created), 0)
         self.assertEqual(self.api.updated, [])
 
