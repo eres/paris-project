@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import fcntl
 import json
 import os
 import re
@@ -286,7 +287,10 @@ class NotionSync:
                 }
                 self._save()
                 return f"adopted matching page: {found['title']}"
-            return f"existing page (not overwritten): {found['title']}"
+            raise ValueError(
+                f"Existing Notion page differs from local translation: {found['title']}; "
+                "manual reconciliation required (no overwrite)"
+            )
 
         other_pending = [p for p in self.pending() if p != path]
         if other_pending and not ordered_backfill:
@@ -363,20 +367,27 @@ def main() -> int:
             os.getenv("NOTION_API_KEY", ""),
             os.getenv("NOTION_NOTES_PAGE_ID", DEFAULT_NOTES_PAGE),
         )
-        sync = NotionSync(vault, api)
-        if args.audit:
-            print(json.dumps(sync.audit(), ensure_ascii=False, indent=2))
-        elif args.backfill:
-            for outcome in sync.backfill(args.order_file):
-                print(outcome)
-        elif args.reconcile:
-            for outcome in sync.reconcile():
-                print(outcome)
-        elif args.source:
-            print(sync.sync_one(args.source))
-        else:
-            parser.error("Choose --audit, --backfill, --reconcile or a source note")
-        return 0
+        # Serialize watcher/manual invocations to prevent competing sequence numbers.
+        lock_path = STATE_FILE.with_suffix(".lock")
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            sync = NotionSync(vault, api)
+            if args.audit:
+                print(json.dumps(sync.audit(), ensure_ascii=False, indent=2))
+            elif args.backfill:
+                for outcome in sync.backfill(args.order_file):
+                    print(outcome)
+            elif args.reconcile:
+                for outcome in sync.reconcile():
+                    print(outcome)
+            elif args.source:
+                print(sync.sync_one(args.source))
+            else:
+                parser.error("Choose --audit, --backfill, --reconcile or a source note")
+            return 0
+        finally:
+            os.close(fd)
     except (ValueError, OSError, httpx.HTTPError, KeyError) as error:
         print(f"[NOTION] Sync blocked: {error}", file=sys.stderr)
         return 1
