@@ -29,7 +29,6 @@ from watch_vault import WATCH_DIRS, get_note_status
 from translate_note_fr import split_frontmatter
 
 NOTION_VERSION = "2026-03-11"
-DEFAULT_NOTES_PAGE = "3ccf9bd4-a7ae-8157-b497-fb287db20c8a"
 STATE_FILE = Path(__file__).parent / ".notion-sync-state.json"
 TITLE_RE = re.compile(r"^(\d+)\.\s+(.+)$")
 
@@ -93,6 +92,8 @@ class NotionAPI:
     def __init__(self, token: str, page_id: str):
         if not token:
             raise ValueError("NOTION_API_KEY is not configured")
+        if not page_id:
+            raise ValueError("NOTION_NOTES_PAGE_ID is not configured")
         self.page_id = page_id
         self.client = httpx.Client(
             base_url="https://api.notion.com",
@@ -375,7 +376,7 @@ def main() -> int:
             parser.error("Provide a source note or --vault")
         api = NotionAPI(
             os.getenv("NOTION_API_KEY", ""),
-            os.getenv("NOTION_NOTES_PAGE_ID", DEFAULT_NOTES_PAGE),
+            os.getenv("NOTION_NOTES_PAGE_ID", ""),
         )
         # Serialize watcher/manual invocations to prevent competing sequence numbers.
         lock_path = STATE_FILE.with_suffix(".lock")
