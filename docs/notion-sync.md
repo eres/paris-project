@@ -62,6 +62,21 @@ The example is illustrative only; verify the actual order first. Then:
 
     .venv/bin/python sync_notion.py --vault "/absolute/path/to/Notre-Paris" --backfill --order-file "/private/path/notion-order.txt"
 
+**Important for the first eleven pages:** an older source filename may be in
+Spanish while the title in Notion is French (e.g., a Spanish filename for
+La salle). If the audit calls an already-published legacy note "pending",
+do **not** backfill it as a new page. In the private, git-ignored file
+.notion-sync-aliases.json, map its actual vault-relative source path to the
+existing Notion page UUID, for example:
+
+    {
+      "01 Places/Nombre original.md": "UUID-of-existing-Notion-page"
+    }
+
+This is a manually verified identity map, not a numbering map. The script
+validates every alias against a child page in Notes and never writes an
+untracked page whose body differs from the local French text.
+
 The tool requires the list to contain every currently unpublished translated
 Done note **exactly once**, before it changes Notion. It publishes in that
 order, without changing previously numbered pages. If only one note is pending,
