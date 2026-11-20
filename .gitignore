@@ -12,3 +12,8 @@ tests/fixtures/vault/10 Literary Map/
 tests/fixtures/vault/11 Proofread/
 tests/fixtures/vault/12 French/
 tests/fixtures/vault/13 Editorial Review/
+
+# Private local Notion publication ledger / lock
+.notion-sync-state.json
+.notion-sync-state.lock
+.notion-sync-state.json.tmp
