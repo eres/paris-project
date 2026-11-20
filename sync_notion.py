@@ -344,6 +344,16 @@ class NotionSync:
             path = self.vault / key
             if path.is_file() and get_note_status(path) == "done" and french_path(self.vault, path).is_file():
                 results.append(self.sync_one(path))
+        # Recover a single completed note missed during a restart. Never
+        # guess the order when several unpublished French notes coexist.
+        awaiting = self.pending()
+        if len(awaiting) == 1:
+            results.append(self.sync_one(awaiting[0]))
+        elif awaiting:
+            results.append(
+                "Backfill required (writing order unknown): " +
+                ", ".join(self.key(path) for path in awaiting)
+            )
         return results
 
 
