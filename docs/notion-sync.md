@@ -14,16 +14,25 @@ The original Spanish notes, reviews and local French files are never modified by
   remote Notion page ID in a local, git-ignored ledger. Title collisions
   are detected before creating anything.
 - Repeating the operation is idempotent. Editing a Done source causes a
-  new French translation and, if the remote page was not manually edited,
-  updates the existing Notion page.
+  new French translation and, if the remote page was not manually edited
+  after it was linked, updates the existing Notion page.
 - An edit made directly in Notion blocks automatic replacement rather than
-  being lost. Untracked existing pages are adopted only when their Markdown
-  exactly matches the current French content.
-- Failed publication is retried by the watchdog without rerunning translation,
-  with exponential delay between 5 and 60 minutes. At service startup,
-  previously tracked pages are reconciled.
+  being lost. An existing page with the same identity is linked without
+  writing when its text differs. A later change of the French source updates
+  that same page; a change made in Notion after the link is preserved.
+- Title matching ignores accents and apostrophe variants, and page IDs match
+  with or without dashes. `--audit` reports filesystem times and any
+  frontmatter date, but a year of 2004 or 2005 is marked narrative and is
+  never used as writing order. The audit does not propose numbers.
+- Transient Notion failures are retried by the watchdog without rerunning
+  translation, with exponential delay between 5 and 60 minutes. Exit code 2
+  is a permanent conflict and is not retried. At service startup, previously
+  tracked pages are reconciled. One unpublished note can be recovered only
+  when every numbered Notes page is already linked.
 - The watcher **refuses to allocate a new number** if other translated Done
-  notes are missing from Notion. This avoids racing past old unpublished work.
+  notes are missing from Notion, or if any numbered Notes page is not linked
+  to a vault note by title, alias or the local ledger. This avoids both
+  racing past old unpublished work and duplicating the existing pages.
 
 ## One-time configuration on the Mac mini
 
@@ -80,7 +89,17 @@ untracked page whose body differs from the local French text.
 The tool requires the list to contain every currently unpublished translated
 Done note **exactly once**, before it changes Notion. It publishes in that
 order, without changing previously numbered pages. If only one note is pending,
-the order file is optional.
+the order file is optional. Backfill and ordinary creation both refuse to
+allocate a number while `--audit` still lists `notion_only` pages. Map those
+pages in the alias file, or confirm that a filename already matches the French
+title, and run `--audit` again before publishing.
+
+Do not turn on `NOTION_SYNC_ENABLED` until that audit shows no `notion_only`
+pages and every pending note has an explicit place in the order file. A
+service restart must not be used to discover the writing order. The installed
+LaunchAgent keeps using watchdog's native observer; the Notion stage is an
+additional step in the existing Done pipeline and does not change proofreading
+or editorial review.
 
 If a page with a matching title already exists but differs from local French,
 the sync blocks and requests a human comparison. It never silently overwrites

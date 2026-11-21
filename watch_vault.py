@@ -218,6 +218,7 @@ class VaultHandler(FileSystemEventHandler):
         self.notion_sync_enabled = notion_sync_enabled
         self.pending_notion: dict[Path, float] = {}
         self.notion_retry_attempts: dict[Path, int] = {}
+        self.last_step_code = 1
         self.pending = {}
         self.last_observed_status: dict[Path, str | None] = {}
         self.status_generation: dict[Path, int] = {}
@@ -300,6 +301,7 @@ class VaultHandler(FileSystemEventHandler):
                 text=True,
             )
         except Exception:
+            self.last_step_code = 1
             log(f"[{tag}] Subprocess could not start for {note_path}", stream=sys.stderr)
             log(traceback.format_exc(), stream=sys.stderr)
             return False
@@ -309,12 +311,28 @@ class VaultHandler(FileSystemEventHandler):
         if result.stderr:
             log(f"[{tag}] stderr:\n{result.stderr.rstrip()}", stream=sys.stderr)
 
+        self.last_step_code = result.returncode
         if result.returncode == 0:
             log(f"[{tag}] Success: {note_path}")
             return True
 
         log(f"[{tag}] Failure: {note_path} (exit code {result.returncode})", stream=sys.stderr)
         return False
+
+    def _record_notion_result(self, path: Path, succeeded: bool) -> None:
+        if succeeded:
+            self.pending_notion.pop(path, None)
+            self.notion_retry_attempts.pop(path, None)
+            return
+        if self.last_step_code == 2:
+            self.pending_notion.pop(path, None)
+            self.notion_retry_attempts.pop(path, None)
+            log(
+                f"[NOTION] Permanent conflict; not retrying: {path}",
+                stream=sys.stderr,
+            )
+            return
+        self.schedule_notion_retry(path)
 
     def run_review_pipeline(self, path: Path) -> bool:
         if not self.run_step("PROOFREAD", self.proofread_path, path):
@@ -363,13 +381,9 @@ class VaultHandler(FileSystemEventHandler):
             return False
 
         if self.notion_sync_enabled:
-            if self.run_step("NOTION", self.notion_path, path):
-                self.pending_notion.pop(path, None)
-                self.notion_retry_attempts.pop(path, None)
-            else:
-                # Keep the successful translation and retry only publication;
-                # never regenerate the French note just because Notion is down.
-                self.schedule_notion_retry(path)
+            # A transient Notion failure retries publication only.
+            # Exit code 2 is a permanent conflict and must not be retried.
+            self._record_notion_result(path, self.run_step("NOTION", self.notion_path, path))
 
         if not self.literary_map_enabled:
             log("[LITERARY_MAP] Literary map disabled")
@@ -471,11 +485,7 @@ class VaultHandler(FileSystemEventHandler):
                     self.pending_notion.pop(path, None)
                     self.notion_retry_attempts.pop(path, None)
                     continue
-                if self.run_step("NOTION", self.notion_path, path):
-                    self.pending_notion.pop(path, None)
-                    self.notion_retry_attempts.pop(path, None)
-                else:
-                    self.schedule_notion_retry(path)
+                self._record_notion_result(path, self.run_step("NOTION", self.notion_path, path))
 
 
 def main():

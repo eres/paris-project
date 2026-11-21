@@ -220,6 +220,28 @@ class VaultHandlerTests(unittest.TestCase):
                 "TRANSLATE", "NOTION", "LITERARY_MAP", "NOTION",
             ])
 
+    def test_permanent_notion_conflict_is_not_retried(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            note = self.make_note(root, "Done")
+            handler = self.make_handler(root)
+            handler.notion_sync_enabled = True
+            calls = []
+
+            def fake_step(tag, _script, _note):
+                calls.append(tag)
+                if tag == "NOTION":
+                    handler.last_step_code = 2
+                    return False
+                handler.last_step_code = 0
+                return True
+
+            handler.run_step = Mock(side_effect=fake_step)
+            self.assertTrue(handler.run_pipeline(note))
+            self.assertNotIn(note, handler.pending_notion)
+            handler.process_pending()
+            self.assertEqual(calls, ["TRANSLATE", "NOTION", "LITERARY_MAP"])
+
 
 
 if __name__ == "__main__":
